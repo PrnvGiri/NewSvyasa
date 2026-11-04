@@ -22,7 +22,14 @@ export async function fetchEvents(search = '', headers = {}) {
     throw new Error(errorData.detail || errorData.error || errorData.message || 'Failed to fetch events');
   }
 
-  return res.json();
+  const data = await res.json();
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && Array.isArray(data.events)) {
+    return data.events;
+  }
+  throw new Error('API did not return a list of events. Received: ' + JSON.stringify(data).slice(0, 100));
 }
 
 /**
@@ -89,7 +96,8 @@ export async function fetchMyRegistrations(headers = {}) {
     throw new Error(errorData.detail || errorData.error || errorData.message || 'Failed to fetch registrations');
   }
 
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
 
 /**
@@ -109,5 +117,6 @@ export async function fetchEventAttendees(eventId, headers = {}) {
     throw new Error(errorData.detail || errorData.error || errorData.message || 'Failed to fetch attendees');
   }
 
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }

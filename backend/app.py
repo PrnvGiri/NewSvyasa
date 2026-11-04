@@ -1,4 +1,5 @@
 import os
+from urllib.parse import parse_qs, urlencode
 from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from postgrest import APIError
@@ -31,24 +32,20 @@ print('Supabase connected')
 # -----------------------------------------------------------------------------
 class VercelPathFixMiddleware:
     """
-    WSGI Middleware to restore original request path when Vercel rewrites traffic to /api/index.
+    WSGI Middleware to restore original request path and query parameters
+    when Vercel rewrites traffic to /api/index?__path=$1.
     """
     def __init__(self, wsgi_app):
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
-        path = environ.get("PATH_INFO", "")
-        if path in ("/api/index.py", "/api/index", "/index.py", "/index", "/api/index/", "/api/index.py/"):
-            matched = (
-                environ.get("HTTP_X_MATCHED_PATH") or
-                environ.get("HTTP_X_FORWARDED_PATH") or
-                environ.get("HTTP_X_NOW_ROUTE_MATCHES") or
-                environ.get("HTTP_X_REWRITE_URL") or
-                environ.get("HTTP_X_ORIGINAL_URI") or
-                environ.get("RAW_URI")
-            )
-            if matched:
-                environ["PATH_INFO"] = matched.split("?")[0]
+        qs = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+        if "__path" in qs:
+            val = qs.pop("__path")[0]
+            if not val.startswith("/"):
+                val = "/" + val
+            environ["PATH_INFO"] = val
+            environ["QUERY_STRING"] = urlencode(qs, doseq=True)
         return self.wsgi_app(environ, start_response)
 
 app.wsgi_app = VercelPathFixMiddleware(app.wsgi_app)
@@ -81,7 +78,6 @@ def add_cors_headers(response):
 @app.route('/')
 @app.route('/api')
 @app.route('/api/index')
-@app.route('/api/index.py')
 def api_index():
     return jsonify({
         "status": "online",
