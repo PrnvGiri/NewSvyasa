@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from postgrest import APIError
 from dotenv import load_dotenv
@@ -11,15 +11,8 @@ if os.path.exists(dotenv_path):
 else:
     load_dotenv()
 
-# Determine dist folder for frontend build if present
-frontend_dist = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
-if not os.path.exists(frontend_dist):
-    frontend_dist = os.path.join(os.path.dirname(__file__), 'frontend', 'dist')
-
-app = Flask(
-    __name__,
-    static_folder=os.path.join(frontend_dist, 'assets') if os.path.exists(frontend_dist) else None
-)
+app = Flask(__name__)
+app.url_map.strict_slashes = False
 
 supabase: Client = create_client(
     os.environ.get("SUPABASE_URL"),
@@ -55,39 +48,29 @@ def add_cors_headers(response):
 
 
 # -----------------------------------------------------------------------------
-# Root & Static Serving
+# Root & API Info Endpoint
 # -----------------------------------------------------------------------------
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve(path):
-    # Don't intercept API routes
-    if path.startswith('api'):
-        return jsonify({"detail": "Not found", "error": "Endpoint not found"}), 404
-
-    # Serve built frontend index.html or assets if available
-    if os.path.exists(frontend_dist):
-        file_path = os.path.join(frontend_dist, path)
-        if path != "" and os.path.exists(file_path):
-            return send_from_directory(frontend_dist, path)
-        return send_from_directory(frontend_dist, 'index.html')
-
-    # Fallback status overview if frontend is not built
+@app.route('/')
+@app.route('/api')
+def api_index():
     return jsonify({
+        "status": "online",
         "message": "CampusConnect Event API is running",
         "endpoints": [
-            {"method": "GET", "path": "/api/events", "description": "Browse events"},
-            {"method": "GET", "path": "/api/events/<id>", "description": "Event details"},
-            {"method": "POST", "path": "/api/registrations", "description": "Create registration, 201 or 409"},
-            {"method": "GET", "path": "/api/me/registrations", "description": "Current user's registrations"},
-            {"method": "GET", "path": "/api/events/<id>/registrations", "description": "Attendee list, owning organizer only"}
+            {"method": "GET", "path": "/api/events", "description": "Browse events (supports ?search=)"},
+            {"method": "GET", "path": "/api/events/<id>", "description": "Event details with capacity info"},
+            {"method": "POST", "path": "/api/registrations", "description": "Create registration (201 Created or 409 Conflict)"},
+            {"method": "GET", "path": "/api/me/registrations", "description": "Current user's registrations (header x-user-id)"},
+            {"method": "GET", "path": "/api/events/<id>/registrations", "description": "Attendee list (owning organizer only)"}
         ]
-    })
+    }), 200
 
 
 # -----------------------------------------------------------------------------
 # 1. GET /api/events - Browse events
 # -----------------------------------------------------------------------------
 @app.route('/api/events', methods=['GET'])
+@app.route('/events', methods=['GET'])
 def list_events():
     try:
         search = request.args.get('search')
@@ -108,6 +91,7 @@ def list_events():
 # 2. GET /api/events/<id> - Event details
 # -----------------------------------------------------------------------------
 @app.route('/api/events/<event_id>', methods=['GET'])
+@app.route('/events/<event_id>', methods=['GET'])
 def get_event_details(event_id):
     try:
         event_res = supabase.table('events').select('*').eq('id', event_id).execute()
@@ -138,6 +122,7 @@ def get_event_details(event_id):
 # 3. POST /api/registrations - Create registration, 201 or 409
 # -----------------------------------------------------------------------------
 @app.route('/api/registrations', methods=['POST'])
+@app.route('/registrations', methods=['POST'])
 def create_registration():
     try:
         data = request.get_json(silent=True) or {}
@@ -227,6 +212,7 @@ def create_registration():
 # 4. GET /api/me/registrations - Current user's registrations
 # -----------------------------------------------------------------------------
 @app.route('/api/me/registrations', methods=['GET'])
+@app.route('/me/registrations', methods=['GET'])
 def get_my_registrations():
     try:
         user_id = request.headers.get('x-user-id') or request.args.get('user_id') or DEFAULT_TEST_STUDENT_ID
@@ -247,6 +233,7 @@ def get_my_registrations():
 # 5. GET /api/events/<id>/registrations - Attendee list, owning organizer only
 # -----------------------------------------------------------------------------
 @app.route('/api/events/<event_id>/registrations', methods=['GET'])
+@app.route('/events/<event_id>/registrations', methods=['GET'])
 def get_event_attendees(event_id):
     try:
         user_id = request.headers.get('x-user-id') or request.args.get('user_id') or DEFAULT_ORGANIZER_ID
@@ -273,6 +260,24 @@ def get_event_attendees(event_id):
         return jsonify({"detail": error.message, "error": error.message}), 500
     except Exception as error:
         return jsonify({"detail": str(error), "error": str(error)}), 500
+
+
+# -----------------------------------------------------------------------------
+# 404 Error Handler
+# -----------------------------------------------------------------------------
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({
+        "detail": "Endpoint not found",
+        "error": "Not Found",
+        "available_endpoints": [
+            "GET /api/events",
+            "GET /api/events/<id>",
+            "POST /api/registrations",
+            "GET /api/me/registrations",
+            "GET /api/events/<id>/registrations"
+        ]
+    }), 404
 
 
 if __name__ == '__main__':
